@@ -1,93 +1,92 @@
-# Raw Java HTTP Server
+# Tiny HTTP/1.1 Server and Client in Java
 
-A tiny HTTP/1.1 server built directly on top of Java TCP sockets.
+A small HTTP/1.1 server and client built directly on top of Java TCP sockets.
 
-The project uses `ServerSocket` and `Socket` to manually read HTTP requests, inspect the request line and headers, choose a response, and write a complete HTTP response back to the client.
+The server manually parses incoming HTTP requests and constructs HTTP responses. The client manually constructs GET requests, parses HTTP responses, and determines the end of the response body using `Content-Length`.
 
-No HTTP framework or built-in HTTP server is used.
+No HTTP server, HTTP client, framework, or external networking library is used.
 
 ## What This Project Demonstrates
 
-The main goal of this project is to understand what happens underneath frameworks such as Express.
+The goal of this project is to understand what happens underneath higher-level HTTP tools and frameworks.
 
-A request such as:
+The server performs:
+
+```text
+accept TCP connection
+        ↓
+read request line
+        ↓
+read headers until blank line
+        ↓
+extract method and path
+        ↓
+choose response
+        ↓
+construct HTTP status + headers
+        ↓
+write response body
+        ↓
+close connection
+```
+
+The client performs:
+
+```text
+open TCP connection
+        ↓
+construct HTTP GET request
+        ↓
+send request bytes
+        ↓
+read status line
+        ↓
+read headers until blank line
+        ↓
+find Content-Length
+        ↓
+read exactly N body bytes
+        ↓
+decode body as UTF-8
+        ↓
+print status and body
+```
+
+Together, they demonstrate both sides of a simple HTTP/1.1 exchange over TCP.
+
+## Project Structure
+
+```text
+RawHttpServer.java
+RawHttpClient.java
+```
+
+## HTTP Message Structure
+
+HTTP headers are line-oriented.
+
+A request to `/hello` looks like:
 
 ```http
 GET /hello HTTP/1.1
 Host: localhost:8080
-User-Agent: curl/8.21.0
-Accept: */*
+Connection: close
+
 ```
 
-arrives through a TCP connection as bytes.
-
-The server manually:
-
-1. Accepts the TCP connection.
-2. Reads the HTTP request line.
-3. Reads headers until the blank line.
-4. Extracts the HTTP method, path, and version.
-5. Chooses a response based on the requested path.
-6. Constructs an HTTP/1.1 response.
-7. Writes the response bytes to the socket.
-8. Closes the connection.
-
-## Supported Routes
-
-The server currently supports:
-
-```text
-GET /        → Welcome!
-GET /hello   → Hello, world!
-```
-
-Any other path returns:
-
-```text
-404 Not Found
-```
-
-## HTTP Request Structure
-
-A request begins with a request line:
-
-```text
-GET /hello HTTP/1.1
-```
-
-which contains:
-
-```text
-GET        /hello        HTTP/1.1
-│             │              │
-method        path           version
-```
-
-Headers follow the request line:
-
-```http
-Host: localhost:8080
-User-Agent: curl/8.21.0
-Accept: */*
-```
-
-The header section ends with a blank line.
-
-On the wire, HTTP lines are terminated with:
+On the wire, each line is terminated using:
 
 ```text
 \r\n
 ```
 
-so the end of the headers is represented by:
+and the header section ends with:
 
 ```text
 \r\n\r\n
 ```
 
-## HTTP Response Structure
-
-A successful response looks like:
+A successful response may look like:
 
 ```http
 HTTP/1.1 200 OK
@@ -98,7 +97,58 @@ Connection: close
 Hello, world!
 ```
 
-The response consists of:
+The blank line separates the headers from the body.
+
+---
+
+# Server
+
+The server uses `ServerSocket` and `Socket` directly.
+
+It listens on:
+
+```text
+localhost:8080
+```
+
+and handles one HTTP request per TCP connection.
+
+## Supported Routes
+
+```text
+GET /        → Welcome!
+GET /hello   → Hello, world!
+```
+
+Any other path returns:
+
+```text
+HTTP/1.1 404 Not Found
+```
+
+with:
+
+```text
+Not found
+```
+
+as the body.
+
+## Request Parsing
+
+The first request line is split into:
+
+```text
+GET        /hello        HTTP/1.1
+│             │              │
+method        path           version
+```
+
+The remaining headers are read until the blank line marking the end of the HTTP header section.
+
+## Response Construction
+
+The server manually constructs:
 
 ```text
 status line
@@ -107,73 +157,186 @@ blank line
 body
 ```
 
-For an unknown path, the server returns:
+For example:
 
 ```http
-HTTP/1.1 404 Not Found
+HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
-Content-Length: 9
+Content-Length: 13
 Connection: close
 
-Not found
+Hello, world!
 ```
 
-## Content-Length
-
-`Content-Length` represents the number of bytes in the response body.
-
-The body is encoded as UTF-8 before calculating its length:
+The response body is first encoded as UTF-8:
 
 ```java
 byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
 ```
 
-The server then uses:
+and `Content-Length` is calculated using:
 
 ```java
 bodyBytes.length
 ```
 
-as the value of `Content-Length`.
+rather than the Java string length.
 
 ## Connection Handling
 
-The server stays running and continuously accepts new TCP connections:
+The server process stays running and continuously accepts connections:
 
 ```text
 server starts
     ↓
-accept client
+accept client A
     ↓
-handle one HTTP request
+handle one request
     ↓
-send one HTTP response
+send one response
     ↓
-close client connection
+close client A
     ↓
-accept next client
+accept client B
+    ↓
+...
 ```
 
-Each individual HTTP connection is non-persistent.
+The HTTP connections themselves are non-persistent.
 
-The response includes:
+Each response includes:
 
 ```http
 Connection: close
 ```
 
-and the socket is closed after one request/response exchange.
+and the client socket is closed after one request/response exchange.
 
-The server process itself remains running and waits for the next connection.
+---
 
-## Running the Server
+# Client
 
-### Requirements
+The client also uses `Socket` and raw streams directly.
+
+It connects to the local server, manually creates an HTTP GET request, parses the response, and prints the returned status and body.
+
+## Request Construction
+
+A request is constructed manually:
+
+```http
+GET /hello HTTP/1.1
+Host: localhost:8080
+Connection: close
+
+```
+
+The request path can be supplied as a command-line argument.
+
+If no path is supplied, the client defaults to:
+
+```text
+/
+```
+
+## Response Parsing
+
+The client reads the response status line first:
+
+```text
+HTTP/1.1 200 OK
+```
+
+It then reads headers one line at a time until the blank line.
+
+For example:
+
+```text
+Content-Type: text/plain; charset=utf-8
+Content-Length: 13
+Connection: close
+```
+
+The client extracts `Content-Length` to determine how many body bytes follow.
+
+## Content-Length and Body Framing
+
+Headers are line-oriented, but the body is byte-oriented.
+
+For example:
+
+```text
+Content-Length: 13
+```
+
+means:
+
+> Read exactly 13 body bytes.
+
+The client uses a `readExactly()` loop because a single `InputStream.read()` call is not guaranteed to return every requested byte.
+
+Conceptually:
+
+```text
+Content-Length: N
+        ↓
+allocate N-byte buffer
+        ↓
+read until totalRead == N
+        ↓
+decode completed byte array as UTF-8
+```
+
+If EOF is reached before all body bytes arrive, the client throws an `EOFException` rather than silently accepting a truncated response.
+
+## Why One Buffered Byte Stream Is Used
+
+The client uses one consistent buffered byte stream for both header and body parsing.
+
+It does not mix a `BufferedReader` with direct reads from the underlying socket stream.
+
+This avoids losing body bytes that may have already been read ahead into another buffer.
+
+## UTF-8 Bodies
+
+The response body is decoded only after all bytes have been collected:
+
+```java
+new String(bodyBytes, StandardCharsets.UTF_8);
+```
+
+This correctly handles non-ASCII bodies such as:
+
+```text
+Hello 👋
+```
+
+For that body:
+
+```text
+Hello    → 5 bytes
+space    → 1 byte
+👋       → 4 bytes
+
+total    → 10 UTF-8 bytes
+```
+
+so the correct HTTP header is:
+
+```text
+Content-Length: 10
+```
+
+---
+
+# Running the Project
+
+## Requirements
 
 - Java JDK
 - No external dependencies
 
-### Start the server
+## Start the Server
 
 Run:
 
@@ -181,99 +344,141 @@ Run:
 RawHttpServer
 ```
 
-The server listens on:
+The server listens at:
 
 ```text
 http://localhost:8080
 ```
 
-## Testing With curl
+## Run the Client
 
-Test the root route:
-
-```bash
-curl.exe http://localhost:8080/
-```
-
-Expected response body:
-
-```text
-Welcome!
-```
-
-Test the hello route:
+Run the client with a path:
 
 ```bash
-curl.exe http://localhost:8080/hello
+java RawHttpClient /
 ```
 
-Expected response body:
+or:
+
+```bash
+java RawHttpClient /hello
+```
+
+or:
+
+```bash
+java RawHttpClient /whatever
+```
+
+The server must already be running before the client connects.
+
+## Example
+
+Request:
 
 ```text
+/hello
+```
+
+Output:
+
+```text
+HTTP/1.1 200 OK
 Hello, world!
 ```
 
-To inspect the HTTP response headers as well:
+Unknown route:
+
+```text
+/whatever
+```
+
+Output:
+
+```text
+HTTP/1.1 404 Not Found
+Not found
+```
+
+The server can also be tested independently with:
 
 ```bash
 curl.exe -i http://localhost:8080/hello
 ```
 
-Test the fallback route:
+or directly through a browser.
 
-```bash
-curl.exe -i http://localhost:8080/whatever
-```
+---
 
-Expected status:
+# Verification
 
-```text
-HTTP/1.1 404 Not Found
-```
+The server and client were tested with:
 
-with the body:
+- `GET /`
+- `GET /hello`
+- Unknown paths returning `404 Not Found`
+- Multiple sequential HTTP connections
+- Non-ASCII UTF-8 response bodies
+- Artificially limited body reads to force partial-read handling
+- A deliberately truncated body to verify premature EOF detection
 
-```text
-Not found
-```
+During the partial-read test, the client was limited to reading only a small number of bytes per `read()` call. The complete body was still reconstructed correctly.
 
-## Testing With a Browser
+During the truncated-body test, the server advertised a larger `Content-Length` than the number of bytes it actually sent. The client correctly detected EOF before the promised body length was reached.
 
-The routes can also be visited directly:
+---
 
-```text
-http://localhost:8080/
-```
+# Limitations
 
-and:
+This project intentionally implements only a small controlled subset of HTTP/1.1.
 
-```text
-http://localhost:8080/hello
-```
+It does not support:
 
-## Scope
-
-This project intentionally implements only a very small portion of HTTP.
-
-It does not include:
-
+- HTTPS
+- Chunked transfer encoding
+- Redirects
+- Compression
+- Cookies
 - Request bodies
 - POST requests
 - Persistent HTTP connections
-- Keep-alive handling
+- Connection pooling
+- Concurrent server clients
 - Middleware
-- Routing frameworks
 - Templates
-- TLS
 - HTTP/2
 - Full HTTP specification compliance
-- Concurrent client handling
 
-The purpose is to understand the basic path from a TCP socket to an HTTP request and response.
+The client expects responses from the accompanying server using `Content-Length`.
 
-## Key Takeaway
+---
 
-A high-level route such as:
+# Key Takeaways
+
+TCP provides a byte stream. HTTP defines structure on top of that stream.
+
+On the server side:
+
+```text
+TCP bytes
+→ HTTP request
+→ method + path
+→ HTTP response
+→ TCP bytes
+```
+
+On the client side:
+
+```text
+TCP connection
+→ HTTP request bytes
+→ HTTP response headers
+→ Content-Length
+→ exact body bytes
+→ decoded response
+```
+
+A high-level server route such as:
 
 ```javascript
 app.get("/hello", (req, res) => {
@@ -281,24 +486,6 @@ app.get("/hello", (req, res) => {
 });
 ```
 
-ultimately sits on top of work similar to:
+and a high-level HTTP client both hide much of this work.
 
-```text
-TCP connection
-      ↓
-read request line
-      ↓
-read headers
-      ↓
-identify method and path
-      ↓
-choose response
-      ↓
-construct HTTP status + headers
-      ↓
-write body bytes
-      ↓
-close connection
-```
-
-HTTP is an application-layer protocol carried over the TCP byte stream.
+This project implements a small portion of that work directly to make the request/response flow visible.

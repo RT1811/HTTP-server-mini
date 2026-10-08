@@ -54,6 +54,9 @@ public class RawHttpServer {
             } else if (path.equals("/hello")) {
                 statusLine = "HTTP/1.1 200 OK\r\n";
                 body = "Hello, world!";
+            } else if (path.equals("/hey")) {
+                statusLine = "HTTP/1.1 200 OK\r\n";
+                body = "Hello 👋";
             } else {
                 statusLine = "HTTP/1.1 404 Not Found\r\n";
                 body = "Not found";

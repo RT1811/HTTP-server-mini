@@ -1,117 +1,51 @@
-# Tiny HTTP/1.1 Server and Client in Java
+# Tiny HTTP/1.1 Server, Client, and Reverse Proxy in Java
 
-A small HTTP/1.1 server and client built directly on top of Java TCP sockets.
+A small networking project that implements three pieces of HTTP infrastructure directly on top of Java TCP sockets:
 
-The server manually parses incoming HTTP requests and constructs HTTP responses. The client manually constructs GET requests, parses HTTP responses, and determines the end of the response body using `Content-Length`.
+- A raw HTTP/1.1 server
+- A raw HTTP/1.1 client
+- A simple reverse proxy
 
-No HTTP server, HTTP client, framework, or external networking library is used.
+No HTTP frameworks, built-in HTTP servers, HTTP clients, or external networking libraries are used.
 
-## What This Project Demonstrates
+The goal is to make the request/response flow visible underneath higher-level tools such as Express, `HttpClient`, and production reverse proxies.
 
-The goal of this project is to understand what happens underneath higher-level HTTP tools and frameworks.
-
-The server performs:
-
-```text
-accept TCP connection
-        ↓
-read request line
-        ↓
-read headers until blank line
-        ↓
-extract method and path
-        ↓
-choose response
-        ↓
-construct HTTP status + headers
-        ↓
-write response body
-        ↓
-close connection
-```
-
-The client performs:
-
-```text
-open TCP connection
-        ↓
-construct HTTP GET request
-        ↓
-send request bytes
-        ↓
-read status line
-        ↓
-read headers until blank line
-        ↓
-find Content-Length
-        ↓
-read exactly N body bytes
-        ↓
-decode body as UTF-8
-        ↓
-print status and body
-```
-
-Together, they demonstrate both sides of a simple HTTP/1.1 exchange over TCP.
+---
 
 ## Project Structure
 
 ```text
 RawHttpServer.java
 RawHttpClient.java
+ReverseProxy.java
 ```
 
-## HTTP Message Structure
-
-HTTP headers are line-oriented.
-
-A request to `/hello` looks like:
-
-```http
-GET /hello HTTP/1.1
-Host: localhost:8080
-Connection: close
-
-```
-
-On the wire, each line is terminated using:
+The components run locally using:
 
 ```text
-\r\n
+RawHttpServer  → localhost:8080
+ReverseProxy   → localhost:8081
 ```
 
-and the header section ends with:
-
-```text
-\r\n\r\n
-```
-
-A successful response may look like:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/plain; charset=utf-8
-Content-Length: 13
-Connection: close
-
-Hello, world!
-```
-
-The blank line separates the headers from the body.
+The client can connect directly to the backend or through the proxy.
 
 ---
 
-# Server
+# HTTP Server
 
-The server uses `ServerSocket` and `Socket` directly.
+The raw server uses `ServerSocket` and `Socket` directly.
 
-It listens on:
+It:
 
-```text
-localhost:8080
-```
-
-and handles one HTTP request per TCP connection.
+1. Accepts a TCP connection.
+2. Reads the HTTP request line.
+3. Reads headers until the blank line.
+4. Extracts the method, request target, and HTTP version.
+5. Chooses a response.
+6. Manually constructs the HTTP status line and headers.
+7. Sends the response body.
+8. Closes the client connection.
+9. Accepts the next request.
 
 ## Supported Routes
 
@@ -134,30 +68,7 @@ Not found
 
 as the body.
 
-## Request Parsing
-
-The first request line is split into:
-
-```text
-GET        /hello        HTTP/1.1
-│             │              │
-method        path           version
-```
-
-The remaining headers are read until the blank line marking the end of the HTTP header section.
-
-## Response Construction
-
-The server manually constructs:
-
-```text
-status line
-headers
-blank line
-body
-```
-
-For example:
+## Example Response
 
 ```http
 HTTP/1.1 200 OK
@@ -168,61 +79,43 @@ Connection: close
 Hello, world!
 ```
 
-The response body is first encoded as UTF-8:
+The server calculates `Content-Length` from the UTF-8 encoded body bytes:
 
 ```java
 byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
 ```
 
-and `Content-Length` is calculated using:
-
-```java
-bodyBytes.length
-```
-
-rather than the Java string length.
-
-## Connection Handling
-
-The server process stays running and continuously accepts connections:
-
-```text
-server starts
-    ↓
-accept client A
-    ↓
-handle one request
-    ↓
-send one response
-    ↓
-close client A
-    ↓
-accept client B
-    ↓
-...
-```
-
-The HTTP connections themselves are non-persistent.
-
-Each response includes:
-
-```http
-Connection: close
-```
-
-and the client socket is closed after one request/response exchange.
+rather than relying on Java string length.
 
 ---
 
-# Client
+# HTTP Client
 
-The client also uses `Socket` and raw streams directly.
+The raw client uses `Socket` and raw streams to manually construct requests and parse responses.
 
-It connects to the local server, manually creates an HTTP GET request, parses the response, and prints the returned status and body.
+The flow is:
 
-## Request Construction
+```text
+open TCP connection
+        ↓
+construct HTTP GET request
+        ↓
+send request bytes
+        ↓
+read status line
+        ↓
+read headers until blank line
+        ↓
+find Content-Length
+        ↓
+read exactly N body bytes
+        ↓
+decode body as UTF-8
+        ↓
+print status and body
+```
 
-A request is constructed manually:
+## Example Request
 
 ```http
 GET /hello HTTP/1.1
@@ -233,99 +126,251 @@ Connection: close
 
 The request path can be supplied as a command-line argument.
 
-If no path is supplied, the client defaults to:
-
-```text
-/
-```
-
-## Response Parsing
-
-The client reads the response status line first:
-
-```text
-HTTP/1.1 200 OK
-```
-
-It then reads headers one line at a time until the blank line.
-
 For example:
 
-```text
-Content-Type: text/plain; charset=utf-8
-Content-Length: 13
-Connection: close
+```bash
+java RawHttpClient /hello
 ```
 
-The client extracts `Content-Length` to determine how many body bytes follow.
+## Response Framing
 
-## Content-Length and Body Framing
+HTTP headers are line-oriented and terminated using:
 
-Headers are line-oriented, but the body is byte-oriented.
+```text
+\r\n
+```
 
-For example:
+The header section ends with:
+
+```text
+\r\n\r\n
+```
+
+The response body is different: it is byte-oriented.
+
+If the server sends:
 
 ```text
 Content-Length: 13
 ```
 
-means:
+the client reads exactly 13 body bytes.
 
-> Read exactly 13 body bytes.
+The client uses a `readExactly()` loop because one `InputStream.read()` call is not guaranteed to return all requested bytes.
 
-The client uses a `readExactly()` loop because a single `InputStream.read()` call is not guaranteed to return every requested byte.
+If EOF occurs before the promised body length is received, the client throws an `EOFException` rather than silently accepting a truncated response.
 
-Conceptually:
+## UTF-8 Handling
 
-```text
-Content-Length: N
-        ↓
-allocate N-byte buffer
-        ↓
-read until totalRead == N
-        ↓
-decode completed byte array as UTF-8
-```
-
-If EOF is reached before all body bytes arrive, the client throws an `EOFException` rather than silently accepting a truncated response.
-
-## Why One Buffered Byte Stream Is Used
-
-The client uses one consistent buffered byte stream for both header and body parsing.
-
-It does not mix a `BufferedReader` with direct reads from the underlying socket stream.
-
-This avoids losing body bytes that may have already been read ahead into another buffer.
-
-## UTF-8 Bodies
-
-The response body is decoded only after all bytes have been collected:
+The body is decoded only after every body byte has been collected:
 
 ```java
 new String(bodyBytes, StandardCharsets.UTF_8);
 ```
 
-This correctly handles non-ASCII bodies such as:
+For example:
 
 ```text
 Hello 👋
 ```
 
-For that body:
+has a UTF-8 body length of 10 bytes even though its visible character count is smaller.
+
+---
+
+# Reverse Proxy
+
+The reverse proxy listens on:
 
 ```text
-Hello    → 5 bytes
-space    → 1 byte
-👋       → 4 bytes
-
-total    → 10 UTF-8 bytes
+localhost:8081
 ```
 
-so the correct HTTP header is:
+and forwards requests to the fixed backend:
 
 ```text
-Content-Length: 10
+localhost:8080
 ```
+
+The central idea is that the proxy participates in **two separate TCP connections**:
+
+```text
+Client
+  │
+  │ TCP connection #1
+  ▼
+ReverseProxy :8081
+  │
+  │ TCP connection #2
+  ▼
+RawHttpServer :8080
+```
+
+On the client-facing connection, the proxy behaves like an HTTP server.
+
+On the backend-facing connection, it behaves like an HTTP client.
+
+## Proxy Request Flow
+
+```text
+client sends request
+        ↓
+proxy parses request line + headers
+        ↓
+proxy preserves request target
+        ↓
+proxy opens new backend TCP connection
+        ↓
+proxy constructs new HTTP request
+        ↓
+backend sends response
+        ↓
+proxy parses status + headers
+        ↓
+proxy reads exact Content-Length body
+        ↓
+proxy constructs new client-facing response
+        ↓
+proxy forwards original body bytes
+        ↓
+close both connections
+```
+
+## Request Target Preservation
+
+The proxy preserves the complete request target, including query strings.
+
+For example:
+
+```text
+GET /hello?x=1 HTTP/1.1
+```
+
+becomes:
+
+```text
+GET /hello?x=1 HTTP/1.1
+```
+
+on the backend connection.
+
+## Reconstructed Backend Request
+
+The proxy does not blindly copy all incoming headers.
+
+Instead it constructs a new backend request:
+
+```http
+GET /hello HTTP/1.1
+Host: localhost:8080
+Connection: close
+
+```
+
+This matters because the incoming client is connected to:
+
+```text
+localhost:8081
+```
+
+while the backend connection is addressed to:
+
+```text
+localhost:8080
+```
+
+Headers describing one connection should not automatically be reused for another.
+
+## Backend Response Handling
+
+The proxy reads:
+
+- The backend status line
+- `Content-Type`
+- `Content-Length`
+- The body bytes
+
+It then constructs a new client-facing response using:
+
+```text
+backend status
+Content-Type
+Content-Length
+Connection: close
+```
+
+The response body is forwarded as raw bytes.
+
+The proxy intentionally does not decode and re-encode the body:
+
+```text
+backend bytes
+    ↓
+byte[]
+    ↓
+same bytes
+    ↓
+original client
+```
+
+This preserves content such as:
+
+```text
+Hello 👋
+```
+
+unchanged.
+
+## Body Size Limit
+
+Backend response bodies are limited to:
+
+```text
+1 MiB
+```
+
+before allocation.
+
+This keeps the exercise simple while avoiding unbounded allocation from an invalid `Content-Length`.
+
+## Timeouts
+
+The proxy uses basic socket timeouts.
+
+Backend connection timeout:
+
+```text
+2 seconds
+```
+
+Backend read timeout:
+
+```text
+2 seconds
+```
+
+Incoming client read timeout:
+
+```text
+2 seconds
+```
+
+These prevent the sequential proxy from blocking indefinitely on a stalled connection.
+
+## 502 Bad Gateway
+
+If the backend is unavailable or the backend exchange fails, the proxy returns:
+
+```http
+HTTP/1.1 502 Bad Gateway
+Content-Type: text/plain; charset=utf-8
+Content-Length: 11
+Connection: close
+
+Bad Gateway
+```
+
+The proxy process itself remains running and can continue accepting later requests.
 
 ---
 
@@ -336,7 +381,7 @@ Content-Length: 10
 - Java JDK
 - No external dependencies
 
-## Start the Server
+## 1. Start the Backend Server
 
 Run:
 
@@ -344,87 +389,80 @@ Run:
 RawHttpServer
 ```
 
-The server listens at:
+It listens on:
 
 ```text
-http://localhost:8080
+localhost:8080
 ```
 
-## Run the Client
+## 2. Start the Reverse Proxy
 
-Run the client with a path:
+Run:
+
+```text
+ReverseProxy
+```
+
+It listens on:
+
+```text
+localhost:8081
+```
+
+## 3. Test Through the Proxy
+
+Using curl:
 
 ```bash
-java RawHttpClient /
+curl.exe -i http://localhost:8081/
 ```
-
-or:
 
 ```bash
-java RawHttpClient /hello
+curl.exe -i http://localhost:8081/hello
 ```
-
-or:
 
 ```bash
-java RawHttpClient /whatever
+curl.exe -i http://localhost:8081/whatever
 ```
 
-The server must already be running before the client connects.
-
-## Example
-
-Request:
-
-```text
-/hello
-```
-
-Output:
-
-```text
-HTTP/1.1 200 OK
-Hello, world!
-```
-
-Unknown route:
-
-```text
-/whatever
-```
-
-Output:
-
-```text
-HTTP/1.1 404 Not Found
-Not found
-```
-
-The server can also be tested independently with:
+Requests can also be made directly to the backend:
 
 ```bash
 curl.exe -i http://localhost:8080/hello
 ```
 
-or directly through a browser.
+## Run the Raw Client
+
+Example:
+
+```bash
+java RawHttpClient /
+```
+
+```bash
+java RawHttpClient /hello
+```
+
+```bash
+java RawHttpClient /whatever
+```
 
 ---
 
 # Verification
 
-The server and client were tested with:
+The project was tested with:
 
 - `GET /`
 - `GET /hello`
-- Unknown paths returning `404 Not Found`
-- Multiple sequential HTTP connections
-- Non-ASCII UTF-8 response bodies
-- Artificially limited body reads to force partial-read handling
-- A deliberately truncated body to verify premature EOF detection
-
-During the partial-read test, the client was limited to reading only a small number of bytes per `read()` call. The complete body was still reconstructed correctly.
-
-During the truncated-body test, the server advertised a larger `Content-Length` than the number of bytes it actually sent. The client correctly detected EOF before the promised body length was reached.
+- Unknown routes returning `404 Not Found`
+- Several sequential requests without restarting the server or proxy
+- UTF-8 content such as `Hello 👋`
+- Artificially limited client reads to verify partial-read handling
+- Deliberately truncated HTTP bodies to verify premature EOF detection
+- Query-string preservation through the reverse proxy
+- Backend shutdown producing `502 Bad Gateway`
+- Exact response-body byte forwarding through the proxy
 
 ---
 
@@ -435,57 +473,71 @@ This project intentionally implements only a small controlled subset of HTTP/1.1
 It does not support:
 
 - HTTPS
-- Chunked transfer encoding
-- Redirects
-- Compression
-- Cookies
+- CONNECT
+- Arbitrary proxy destinations
 - Request bodies
 - POST requests
+- Chunked transfer encoding
 - Persistent HTTP connections
 - Connection pooling
-- Concurrent server clients
-- Middleware
-- Templates
+- Compression
+- Cookies
+- Authentication
+- Caching
+- Load balancing
+- Concurrent proxy connections
+- Concurrent server connections
+- Redirect handling
 - HTTP/2
 - Full HTTP specification compliance
 
-The client expects responses from the accompanying server using `Content-Length`.
+The server, client, and proxy are designed to communicate with each other under known conditions using `Content-Length` and `Connection: close`.
 
 ---
 
 # Key Takeaways
 
-TCP provides a byte stream. HTTP defines structure on top of that stream.
+TCP provides a stream of bytes. HTTP defines structure on top of that stream.
 
-On the server side:
+The server turns:
 
 ```text
 TCP bytes
 → HTTP request
-→ method + path
+→ method + target
 → HTTP response
 → TCP bytes
 ```
 
-On the client side:
+The client performs the opposite direction:
 
 ```text
 TCP connection
 → HTTP request bytes
-→ HTTP response headers
+→ response status + headers
 → Content-Length
 → exact body bytes
 → decoded response
 ```
 
-A high-level server route such as:
+The reverse proxy combines both roles:
 
-```javascript
-app.get("/hello", (req, res) => {
-    res.send("Hello, world!");
-});
+```text
+Client
+   ↓
+Proxy acts as server
+   ↓
+Proxy acts as client
+   ↓
+Backend
+   ↓
+Proxy acts as client
+   ↓
+Proxy acts as server
+   ↓
+Client
 ```
 
-and a high-level HTTP client both hide much of this work.
+The important distinction is that a reverse proxy does not simply reuse the original TCP connection.
 
-This project implements a small portion of that work directly to make the request/response flow visible.
+It terminates one connection, understands enough of the HTTP message to construct another request, communicates with the backend over a second connection, and constructs a new response for the original client.

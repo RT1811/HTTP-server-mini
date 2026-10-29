@@ -449,6 +449,147 @@ java RawHttpClient /whatever
 
 ---
 
+## Docker and Compose
+
+The backend server and reverse proxy can also run in separate Docker containers.
+
+The Docker setup demonstrates:
+
+- Building a Java application into a Docker image
+- Running multiple containers from the same image
+- Publishing only the proxy port to the host
+- Private container-to-container networking
+- Passing deployment configuration through environment variables
+- Managing the multi-container setup with Docker Compose
+
+### Build the image
+
+From the repository root:
+
+```bash
+docker build -t http-server-mini .
+```
+
+The image contains both:
+
+```text
+RawHttpServer
+ReverseProxy
+```
+
+Different containers run different main classes from the same image.
+
+### Start with Docker Compose
+
+Run:
+
+```bash
+docker compose up -d
+```
+
+Compose starts:
+
+```text
+proxy container   → localhost:8081
+backend container → private Docker network only
+```
+
+The proxy connects to the backend using the Docker service hostname:
+
+```text
+backend:8080
+```
+
+rather than `localhost:8080`.
+
+The proxy receives the backend hostname through:
+
+```text
+BACKEND_HOST=backend
+```
+
+### Architecture
+
+```text
+Host machine
+    |
+    | localhost:8081
+    v
+Reverse Proxy container
+    |
+    | backend:8080
+    v
+Backend container
+```
+
+Only the proxy is published to the host.
+
+The backend is reachable from the proxy through the private Compose network but is not directly exposed on `localhost:8080`.
+
+### Test the containerized setup
+
+```bash
+curl.exe http://localhost:8081/hello
+```
+
+Expected response:
+
+```text
+Hello, world!
+```
+
+A direct request to the backend from the host should fail:
+
+```bash
+curl.exe http://localhost:8080/hello
+```
+
+because port `8080` is not published.
+
+### View logs
+
+View logs from both services:
+
+```bash
+docker compose logs
+```
+
+Or inspect them individually:
+
+```bash
+docker compose logs proxy
+```
+
+```bash
+docker compose logs backend
+```
+
+This makes it possible to trace a request across both containers:
+
+```text
+client
+  ↓
+proxy receives request
+  ↓
+proxy connects to backend
+  ↓
+backend receives forwarded request
+  ↓
+proxy receives backend response
+  ↓
+client receives response
+```
+
+### Stop the stack
+
+```bash
+docker compose down
+```
+
+This stops and removes the Compose-managed containers and network while keeping the built Docker image.
+
+---
+
 # Verification
 
 The project was tested with:

@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 
 public class ReverseProxy {
     public static void main(String[] args) throws IOException {
+        String backendHost =
+                System.getenv().getOrDefault("BACKEND_HOST", "localhost");
         ServerSocket serverSocket = new ServerSocket(8081);
 
         System.out.println(
@@ -56,7 +58,7 @@ public class ReverseProxy {
             try (Socket backend = new Socket()) {
 
                 backend.connect(
-                        new InetSocketAddress("localhost", 8080),
+                        new InetSocketAddress(backendHost, 8080),
                         2000
                 );
 
@@ -68,7 +70,7 @@ public class ReverseProxy {
 
                 String backendRequest =
                         "GET " + target + " HTTP/1.1\r\n" +
-                                "Host: localhost:8080\r\n" +
+                                "Host: " + backendHost + ":8080\r\n" +
                                 "Connection: close\r\n" +
                                 "\r\n";
 

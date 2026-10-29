@@ -1,0 +1,14 @@
+services:
+  backend:
+    image: http-server-mini
+    command: ["java", "RawHttpServer"]
+
+  proxy:
+    image: http-server-mini
+    command: ["java", "ReverseProxy"]
+    environment:
+      BACKEND_HOST: backend
+    ports:
+      - "8081:8081"
+    depends_on:
+      - backend
